@@ -7,17 +7,26 @@ A lifecycle-first backend framework for Python applications built on Flask and g
 ## Requirements
 
 - Python 3.9+
-- Flask
-- gevent
-- Flask-SocketIO
+
+## Stack
+
+If you use SPECTER, the main runtime dependencies you will be building against are:
+
+- Flask for HTTP app and route integration
+- gevent for concurrency, timers, greenlets, and synchronization
+- Flask-SocketIO for websocket and socket event integration
 
 ## Install
 
-```
-pip install flask gevent flask-socketio
+Install from PyPI:
+
+```bash
+pip install specter-runtime
 ```
 
-Then drop the `specter/` package into your project and import from it:
+This will install SPECTER and its required runtime dependencies.
+
+Import it as `specter`:
 
 ```python
 from specter import Service, Controller, Schema, Field, boot, registry, bus

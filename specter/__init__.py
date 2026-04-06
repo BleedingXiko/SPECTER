@@ -90,6 +90,8 @@ from .http import HTTPError, json_endpoint, expect_json, require_fields
 from .router import Router, route
 from .boot import boot
 
+__version__ = '0.1.1'
+
 __all__ = [
     # Lifecycle
     'Service',
@@ -130,4 +132,5 @@ __all__ = [
     'json_endpoint',
     'expect_json',
     'require_fields',
+    '__version__',
 ]
