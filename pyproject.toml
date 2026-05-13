@@ -38,7 +38,10 @@ Repository = "https://github.com/BleedingXiko/SPECTER"
 Documentation = "https://github.com/BleedingXiko/SPECTER/blob/main/specter.md"
 
 [tool.setuptools]
-include-package-data = false
+include-package-data = true
+
+[tool.setuptools.package-data]
+specter = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "specter.__version__" }

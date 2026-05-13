@@ -71,6 +71,7 @@ Usage::
 """
 
 import logging
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .handler import Handler
 from .lifecycle import Service
@@ -103,20 +104,20 @@ class Controller(Service):
     feature is scattered across 3+ subsystem boundaries.
     """
 
-    schemas = {}  # Override with {name: Schema} in subclasses
-    url_prefix = None  # Override with string path in subclasses
+    schemas: Dict[str, Any] = {}  # Override with {name: Schema} in subclasses
+    url_prefix: Optional[str] = None  # Override with string path in subclasses
 
-    def __init__(self, name=None):
-        super().__init__(name or getattr(self.__class__, 'name', 'controller'))
-        self._blueprint = None
-        self._router = None
-        self._handler_instance = None
+    def __init__(self, name: Optional[str] = None) -> None:
+        super().__init__(str(name or getattr(self.__class__, 'name', 'controller')))
+        self._blueprint: Any = None
+        self._router: Any = None
+        self._handler_instance: Optional['_ControllerHandler'] = None
 
     # ------------------------------------------------------------------
     # Subclass hooks
     # ------------------------------------------------------------------
 
-    def build_routes(self, router):
+    def build_routes(self, router: Any) -> None:
         """
         Override to declare HTTP routes for this feature.
 
@@ -131,7 +132,7 @@ class Controller(Service):
                     return jsonify(self.state.get())
         """
 
-    def build_events(self, handler):
+    def build_events(self, handler: '_ControllerHandler') -> None:
         """
         Override to declare socket events for this feature.
 
@@ -148,7 +149,7 @@ class Controller(Service):
     # Blueprint builder
     # ------------------------------------------------------------------
 
-    def build_blueprint(self, url_prefix=None):
+    def build_blueprint(self, url_prefix: Optional[str] = None) -> Any:
         """
         Build a Flask Blueprint from this controller's route definitions.
 
@@ -179,7 +180,7 @@ class Controller(Service):
     # Handler builder
     # ------------------------------------------------------------------
 
-    def create_handler(self):
+    def create_handler(self) -> '_ControllerHandler':
         """
         Create the controller-backed socket handler.
 
@@ -197,7 +198,7 @@ class Controller(Service):
         self.own(handler)
         return handler
 
-    def build_handler(self, socketio=None):
+    def build_handler(self, socketio: Any = None) -> '_ControllerHandler':
         """
         Build and optionally register socket event handlers from this
         controller's event definitions.
@@ -213,7 +214,7 @@ class Controller(Service):
     # Schema convenience
     # ------------------------------------------------------------------
 
-    def schema(self, name):
+    def schema(self, name: str) -> Any:
         """Look up a schema by name. Raises KeyError if not found."""
         if name not in self.schemas:
             raise KeyError(
@@ -226,14 +227,19 @@ class Controller(Service):
     # State convenience (delegates to Service)
     # ------------------------------------------------------------------
 
-    def create_model(self, name, initial_state=None):
+    def create_model(self, name: str, initial_state: Optional[Dict[str, Any]] = None) -> Any:
         """Create a Model owned by this controller and return it."""
         from .model import create_model
         model = create_model(name, initial_state)
         self.own(model)
         return model
 
-    def create_store(self, name, initial_state=None, **kwargs):
+    def create_store(
+        self,
+        name: str,
+        initial_state: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
         """Create a Store owned by this controller and return it."""
         from .store import create_store
         store = create_store(name, initial_state, **kwargs)
@@ -244,7 +250,7 @@ class Controller(Service):
     # Lifecycle overrides
     # ------------------------------------------------------------------
 
-    def stop(self):
+    def stop(self) -> Any:
         """Stop the controller and tear down its handler."""
         if self._handler_instance:
             try:
@@ -257,7 +263,7 @@ class Controller(Service):
             self._handler_instance = None
         super().stop()
 
-    def health(self):
+    def health(self) -> Dict[str, Any]:
         """Aggregate health from this controller and its handler."""
         report = super().health()
         report['has_blueprint'] = self._blueprint is not None
@@ -266,7 +272,7 @@ class Controller(Service):
             report['schemas'] = list(self.schemas.keys())
         return report
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         parts = [f"Controller '{self.name}'"]
         if self.schemas:
             parts.append(f"{len(self.schemas)} schemas")
@@ -277,7 +283,7 @@ class Controller(Service):
         return f"<{', '.join(parts)}>"
 
     @property
-    def socketio(self):
+    def socketio(self) -> Any:
         """Return the active Flask-SocketIO instance for controller events."""
         if self._handler_instance is not None and getattr(self._handler_instance, '_socketio', None) is not None:
             return self._handler_instance._socketio
@@ -289,18 +295,18 @@ class Controller(Service):
 class _ControllerHandler(Handler):
     """Dynamic event handler built from a controller's ``build_events()``."""
 
-    def __init__(self, name, controller):
+    def __init__(self, name: str, controller: Controller) -> None:
         super().__init__()
         self.name = name
         self._controller = controller
-        self._events = []
+        self._events: List[Tuple[str, Callable[..., Any], int]] = []
 
-    def on(self, event, callback, priority=100):
+    def on(self, event: str, callback: Callable[..., Any], priority: int = 100) -> '_ControllerHandler':
         """Register a socket event handler callback."""
         self._events.append((event, callback, priority))
         return self
 
-    def setup(self, socketio):
+    def setup(self, socketio: Any) -> '_ControllerHandler':
         """Wire registered callbacks into the Socket.IO instance."""
         if self._registered:
             return self

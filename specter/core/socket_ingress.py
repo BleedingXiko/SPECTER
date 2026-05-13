@@ -23,8 +23,11 @@ priority order.
 """
 
 import logging
+from typing import Any, Callable, Dict, List, Optional, overload
 
 from gevent.lock import BoundedSemaphore
+
+from ._typing import CleanupOwner, F, SocketCallback, Unsubscribe
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +35,17 @@ logger = logging.getLogger(__name__)
 class SocketIngress:
     """Shared inbound Socket.IO event dispatcher."""
 
-    def __init__(self, socketio=None, *, name='socket_ingress'):
+    def __init__(self, socketio: Any = None, *, name: str = 'socket_ingress') -> None:
         self.name = name
         self._socketio = socketio
-        self._subscribers = {}   # event -> list[{callback, priority, order}]
-        self._dispatchers = {}   # event -> dispatcher fn
-        self._default_error_subscribers = []
-        self._default_error_dispatcher = None
+        self._subscribers: Dict[str, List[Dict[str, Any]]] = {}   # event -> list[{callback, priority, order}]
+        self._dispatchers: Dict[str, SocketCallback] = {}   # event -> dispatcher fn
+        self._default_error_subscribers: List[Dict[str, Any]] = []
+        self._default_error_dispatcher: Optional[SocketCallback] = None
         self._order = 0
         self._lock = BoundedSemaphore(1)
 
-    def attach(self, socketio):
+    def attach(self, socketio: Any) -> 'SocketIngress':
         """Attach a Flask-SocketIO instance and bind any pending dispatchers."""
         with self._lock:
             self._socketio = socketio
@@ -61,10 +64,39 @@ class SocketIngress:
             self._bind_default_error_dispatcher()
         return self
 
-    def on(self, event_name, callback=None, *, owner=None, priority=100):
+    @overload
+    def on(
+        self,
+        event_name: str,
+        callback: F,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> F:
+        ...
+
+    @overload
+    def on(
+        self,
+        event_name: str,
+        callback: None = None,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Callable[[F], F]:
+        ...
+
+    def on(
+        self,
+        event_name: str,
+        callback: Optional[F] = None,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Any:
         """Register a subscriber, or return a decorator when callback is omitted."""
         if callback is None:
-            def decorator(fn):
+            def decorator(fn: F) -> F:
                 self.subscribe(
                     event_name,
                     fn,
@@ -83,7 +115,13 @@ class SocketIngress:
         )
         return callback
 
-    def handler(self, event_name, *, owner=None, priority=100):
+    def handler(
+        self,
+        event_name: str,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Callable[[F], F]:
         """Decorator alias for ``on(..., callback=None)``."""
         return self.on(
             event_name,
@@ -91,10 +129,36 @@ class SocketIngress:
             priority=priority,
         )
 
-    def on_error_default(self, callback=None, *, owner=None, priority=100):
+    @overload
+    def on_error_default(
+        self,
+        callback: F,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> F:
+        ...
+
+    @overload
+    def on_error_default(
+        self,
+        callback: None = None,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Callable[[F], F]:
+        ...
+
+    def on_error_default(
+        self,
+        callback: Optional[F] = None,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Any:
         """Register a subscriber for Socket.IO's default error hook."""
         if callback is None:
-            def decorator(fn):
+            def decorator(fn: F) -> F:
                 self.subscribe_error_default(
                     fn,
                     owner=owner,
@@ -111,7 +175,14 @@ class SocketIngress:
         )
         return callback
 
-    def subscribe(self, event_name, callback, *, owner=None, priority=100):
+    def subscribe(
+        self,
+        event_name: str,
+        callback: SocketCallback,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Unsubscribe:
         """Subscribe a callback to an inbound socket event."""
         if not isinstance(event_name, str) or not event_name.strip():
             raise TypeError(
@@ -156,7 +227,13 @@ class SocketIngress:
         )
         return unsubscribe
 
-    def subscribe_error_default(self, callback, *, owner=None, priority=100):
+    def subscribe_error_default(
+        self,
+        callback: SocketCallback,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        priority: int = 100,
+    ) -> Unsubscribe:
         """Subscribe a callback to Socket.IO's default error hook."""
         if not callable(callback):
             raise TypeError(
@@ -199,7 +276,7 @@ class SocketIngress:
         )
         return unsubscribe
 
-    def unsubscribe(self, event_name, callback):
+    def unsubscribe(self, event_name: str, callback: SocketCallback) -> bool:
         """Remove a previously subscribed callback from an event."""
         removed = False
         with self._lock:
@@ -225,7 +302,7 @@ class SocketIngress:
             )
         return removed
 
-    def unsubscribe_error_default(self, callback):
+    def unsubscribe_error_default(self, callback: SocketCallback) -> bool:
         """Remove a previously subscribed default error callback."""
         removed = False
         with self._lock:
@@ -242,7 +319,7 @@ class SocketIngress:
             )
         return removed
 
-    def dispatch(self, event_name, *args, **kwargs):
+    def dispatch(self, event_name: str, *args: Any, **kwargs: Any) -> Any:
         """Fan out an inbound Socket.IO event to all subscribers."""
         with self._lock:
             subscribers = list(self._subscribers.get(event_name, ()))
@@ -264,7 +341,7 @@ class SocketIngress:
 
         return last_result
 
-    def dispatch_default_error(self, *args, **kwargs):
+    def dispatch_default_error(self, *args: Any, **kwargs: Any) -> Any:
         """Fan out Socket.IO default errors to all subscribers."""
         with self._lock:
             subscribers = list(self._default_error_subscribers)
@@ -285,7 +362,7 @@ class SocketIngress:
 
         return last_result
 
-    def clear(self):
+    def clear(self) -> None:
         """Remove all subscribers. Primarily for shutdown/tests."""
         with self._lock:
             self._socketio = None
@@ -295,16 +372,16 @@ class SocketIngress:
             self._default_error_dispatcher = None
 
     @property
-    def socketio(self):
+    def socketio(self) -> Any:
         """The attached Flask-SocketIO instance."""
         return self._socketio
 
-    def _bind_dispatcher(self, event_name):
+    def _bind_dispatcher(self, event_name: str) -> None:
         with self._lock:
             if self._socketio is None or event_name in self._dispatchers:
                 return
 
-            def dispatcher(*args, _event_name=event_name, **kwargs):
+            def dispatcher(*args: Any, _event_name: str = event_name, **kwargs: Any) -> Any:
                 return self.dispatch(_event_name, *args, **kwargs)
 
             dispatcher.__name__ = f"specter_socket_dispatch_{event_name}"
@@ -317,12 +394,12 @@ class SocketIngress:
             event_name,
         )
 
-    def _bind_default_error_dispatcher(self):
+    def _bind_default_error_dispatcher(self) -> None:
         with self._lock:
             if self._socketio is None or self._default_error_dispatcher is not None:
                 return
 
-            def dispatcher(*args, **kwargs):
+            def dispatcher(*args: Any, **kwargs: Any) -> Any:
                 return self.dispatch_default_error(*args, **kwargs)
 
             dispatcher.__name__ = 'specter_socket_dispatch_default_error'

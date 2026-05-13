@@ -21,9 +21,12 @@ readers, and tear the whole bundle down deterministically.
 
 import logging
 import subprocess
+from typing import Any, Callable, List, Optional
 
 import gevent
 from gevent.lock import BoundedSemaphore
+
+from ._typing import CleanupOwner
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +34,27 @@ logger = logging.getLogger(__name__)
 class ManagedProcess:
     """Own a subprocess and any greenlets used to read its streams."""
 
-    def __init__(self, name, *, terminate_timeout=5.0, kill_timeout=1.0):
+    def __init__(
+        self,
+        name: str,
+        *,
+        terminate_timeout: float = 5.0,
+        kill_timeout: float = 1.0,
+    ) -> None:
         self.name = name
         self.terminate_timeout = terminate_timeout
         self.kill_timeout = kill_timeout
-        self.process = None
+        self.process: Optional[subprocess.Popen[Any]] = None
         self._lock = BoundedSemaphore(1)
-        self._readers = set()
+        self._readers: set = set()
 
-    def start(self, args, *, owner=None, **popen_kwargs):
+    def start(
+        self,
+        args: Any,
+        *,
+        owner: Optional[CleanupOwner] = None,
+        **popen_kwargs: Any,
+    ) -> 'ManagedProcess':
         """Start the subprocess."""
         self._validate_owner(owner)
 
@@ -55,7 +70,7 @@ class ManagedProcess:
 
         return self
 
-    def attach(self, owner):
+    def attach(self, owner: Optional[CleanupOwner]) -> 'ManagedProcess':
         """Attach cleanup to an owning object that exposes ``add_cleanup()``."""
         if owner is None:
             return self
@@ -65,14 +80,14 @@ class ManagedProcess:
 
     def watch_stream(
         self,
-        stream_name,
-        handler,
+        stream_name: str,
+        handler: Callable[[Any], Any],
         *,
-        chunk_size=None,
-        strip=True,
-        label=None,
-        close_on_exit=False,
-    ):
+        chunk_size: Optional[int] = None,
+        strip: bool = True,
+        label: Optional[str] = None,
+        close_on_exit: bool = False,
+    ) -> Any:
         """
         Read a process stream in a managed greenlet.
 
@@ -93,7 +108,7 @@ class ManagedProcess:
 
         reader_label = label or f'{stream_name}_reader'
 
-        def _reader():
+        def _reader() -> None:
             try:
                 if chunk_size:
                     while True:
@@ -131,11 +146,11 @@ class ManagedProcess:
     def follow_output(
         self,
         *,
-        stdout_handler=None,
-        stderr_handler=None,
-        stdout_label='stdout',
-        stderr_label='stderr',
-    ):
+        stdout_handler: Optional[Callable[[Any], Any]] = None,
+        stderr_handler: Optional[Callable[[Any], Any]] = None,
+        stdout_label: str = 'stdout',
+        stderr_label: str = 'stderr',
+    ) -> List[Any]:
         """Convenience helper to watch stdout/stderr with handlers."""
         watchers = []
         if stdout_handler is not None:
@@ -156,18 +171,18 @@ class ManagedProcess:
             )
         return watchers
 
-    def wait(self, timeout=None):
+    def wait(self, timeout: Optional[float] = None) -> int:
         """Wait for process completion."""
         process = self._require_process()
         return process.wait(timeout=timeout)
 
-    def poll(self):
+    def poll(self) -> Optional[int]:
         """Return the process return code or ``None`` while running."""
         if not self.process:
             return None
         return self.process.poll()
 
-    def stop(self, timeout=None):
+    def stop(self, timeout: Optional[float] = None) -> 'ManagedProcess':
         """Terminate the process and stop any reader greenlets."""
         self._stop_readers()
 
@@ -205,28 +220,28 @@ class ManagedProcess:
         return self
 
     @property
-    def running(self):
+    def running(self) -> bool:
         """``True`` if the process is alive."""
         return bool(self.process and self.process.poll() is None)
 
     @property
-    def pid(self):
+    def pid(self) -> Optional[int]:
         """Process ID, or ``None`` when not started."""
         return self.process.pid if self.process else None
 
     @property
-    def returncode(self):
+    def returncode(self) -> Optional[int]:
         """Return code, or ``None`` while still running."""
         return self.process.returncode if self.process else None
 
-    def _require_process(self):
+    def _require_process(self) -> subprocess.Popen[Any]:
         if self.process is None:
             raise RuntimeError(
                 f"[SPECTER:process] '{self.name}' has not been started"
             )
         return self.process
 
-    def _validate_owner(self, owner):
+    def _validate_owner(self, owner: Optional[CleanupOwner]) -> None:
         if owner is None:
             return
         if not hasattr(owner, 'add_cleanup') or not callable(owner.add_cleanup):
@@ -235,16 +250,16 @@ class ManagedProcess:
                 f"add_cleanup(). Got {type(owner).__name__}."
             )
 
-    def _track_reader(self, glet):
+    def _track_reader(self, glet: Any) -> Any:
         self._readers.add(glet)
 
-        def _discard(completed):
+        def _discard(completed: Any) -> None:
             self._readers.discard(completed)
 
         glet.rawlink(_discard)
         return glet
 
-    def _stop_readers(self):
+    def _stop_readers(self) -> None:
         for glet in list(self._readers):
             try:
                 glet.kill(block=False)
@@ -253,7 +268,7 @@ class ManagedProcess:
         self._readers.clear()
 
     @staticmethod
-    def _close_streams(process):
+    def _close_streams(process: subprocess.Popen[Any]) -> None:
         for stream_name in ('stdout', 'stderr', 'stdin'):
             stream = getattr(process, stream_name, None)
             if stream is not None:
@@ -263,7 +278,13 @@ class ManagedProcess:
                     pass
 
 
-def start_process(name, args, *, owner=None, **popen_kwargs):
+def start_process(
+    name: str,
+    args: Any,
+    *,
+    owner: Optional[CleanupOwner] = None,
+    **popen_kwargs: Any,
+) -> ManagedProcess:
     """Factory helper for starting a managed subprocess."""
     process = ManagedProcess(name)
     process.start(args, owner=owner, **popen_kwargs)

@@ -20,12 +20,16 @@ and fans out updates to subscribers via the bus.
 """
 
 import logging
+from typing import Any, Callable, Dict, Iterable, Optional, Set, TypeVar, Union, overload
 
 from gevent.lock import BoundedSemaphore
 
 from .bus import bus
+from ._typing import CleanupOwner, StateDict, StateSubscriber, Unsubscribe
 
 logger = logging.getLogger(__name__)
+
+R = TypeVar('R')
 
 
 class Store:
@@ -33,20 +37,28 @@ class Store:
 
     def __init__(
         self,
-        name,
-        initial_state=None,
+        name: str,
+        initial_state: Optional[Dict[str, Any]] = None,
         *,
-        emit_events=False,
-        change_event=None,
-    ):
+        emit_events: bool = False,
+        change_event: Optional[str] = None,
+    ) -> None:
         self.name = name
-        self._state = dict(initial_state or {})
+        self._state: StateDict = dict(initial_state or {})
         self._lock = BoundedSemaphore(1)
-        self._subscribers = set()
+        self._subscribers: Set[StateSubscriber] = set()
         self._emit_events = bool(emit_events)
         self._change_event = change_event or f'{name}:changed'
 
-    def get(self, key=None, default=None):
+    @overload
+    def get(self) -> StateDict:
+        ...
+
+    @overload
+    def get(self, key: str, default: Any = None) -> Any:
+        ...
+
+    def get(self, key: Optional[str] = None, default: Any = None) -> Any:
         """
         Return a state value by key, or a full snapshot when ``key`` is omitted.
         """
@@ -55,11 +67,11 @@ class Store:
                 return dict(self._state)
             return self._state.get(key, default)
 
-    def snapshot(self):
+    def snapshot(self) -> StateDict:
         """Return a shallow copy of the current state."""
         return self.get()
 
-    def access(self, reader):
+    def access(self, reader: Callable[[StateDict], R]) -> R:
         """
         Read state atomically without notifying subscribers.
 
@@ -72,7 +84,7 @@ class Store:
         with self._lock:
             return reader(self._state)
 
-    def set(self, partial):
+    def set(self, partial: Dict[str, Any]) -> StateDict:
         """Shallow-merge a dict into the current state."""
         if not isinstance(partial, dict):
             raise TypeError(
@@ -87,7 +99,7 @@ class Store:
         self._notify(snapshot)
         return snapshot
 
-    def replace(self, state):
+    def replace(self, state: Dict[str, Any]) -> StateDict:
         """Replace the entire state with a new mapping."""
         if not isinstance(state, dict):
             raise TypeError(
@@ -102,7 +114,7 @@ class Store:
         self._notify(snapshot)
         return snapshot
 
-    def delete(self, *keys):
+    def delete(self, *keys: str) -> StateDict:
         """Delete one or more keys from the state if present."""
         changed = False
         with self._lock:
@@ -116,11 +128,11 @@ class Store:
             self._notify(snapshot)
         return snapshot
 
-    def clear(self):
+    def clear(self) -> StateDict:
         """Clear all state."""
         return self.replace({})
 
-    def update(self, mutator):
+    def update(self, mutator: Callable[[StateDict], Optional[Dict[str, Any]]]) -> StateDict:
         """
         Atomically update state using a mutator callback.
 
@@ -146,7 +158,12 @@ class Store:
         self._notify(snapshot)
         return snapshot
 
-    def subscribe(self, fn, immediate=False, owner=None):
+    def subscribe(
+        self,
+        fn: StateSubscriber,
+        immediate: bool = False,
+        owner: Optional[CleanupOwner] = None,
+    ) -> Unsubscribe:
         """
         Subscribe to state changes.
 
@@ -174,18 +191,18 @@ class Store:
 
         return unsub
 
-    def watch(self, fn, immediate=True):
+    def watch(self, fn: StateSubscriber, immediate: bool = True) -> Unsubscribe:
         """Alias for ``subscribe(fn, immediate=immediate)``."""
         return self.subscribe(fn, immediate=immediate)
 
-    def destroy(self):
+    def destroy(self) -> None:
         """Reset store state and remove all subscribers."""
         with self._lock:
             self._state.clear()
         self._subscribers.clear()
         logger.debug(f"[SPECTER:store] '{self.name}' destroyed")
 
-    def _notify(self, snapshot):
+    def _notify(self, snapshot: StateDict) -> None:
         for subscriber in list(self._subscribers):
             try:
                 subscriber(dict(snapshot), self)
@@ -198,10 +215,14 @@ class Store:
         if self._emit_events:
             bus.emit(self._change_event, dict(snapshot))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Store '{self.name}' keys={len(self._state)}>"
 
 
-def create_store(name, initial_state=None, **kwargs):
+def create_store(
+    name: str,
+    initial_state: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> Store:
     """Factory for creating a :class:`Store`."""
     return Store(name, initial_state=initial_state, **kwargs)

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 INIT_FILE = ROOT / "specter" / "__init__.py"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
-DEFAULT_REPOSITORY = "specter-runtime"
+DEFAULT_REPOSITORY = None
 
 
 def run(cmd: list[str]) -> None:
@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--repository",
         default=DEFAULT_REPOSITORY,
-        help="Twine repository alias from ~/.pypirc.",
+        help="Twine repository alias from ~/.pypirc. Defaults to Twine's PyPI target.",
     )
     parser.add_argument(
         "--skip-existing",

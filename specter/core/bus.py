@@ -28,6 +28,9 @@ Concurrency model:
 """
 
 import logging
+from typing import Dict, Optional, Set
+
+from ._typing import BusCallback, Unsubscribe
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +38,14 @@ logger = logging.getLogger(__name__)
 class EventBus:
     """Global event bus for decoupled service communication."""
 
-    def __init__(self):
-        self._events = {}  # event_name -> set of callbacks
+    def __init__(self) -> None:
+        self._events: Dict[str, Set[BusCallback]] = {}  # event_name -> set of callbacks
 
     # ------------------------------------------------------------------
     # Subscribe
     # ------------------------------------------------------------------
 
-    def on(self, event, callback):
+    def on(self, event: str, callback: BusCallback) -> Unsubscribe:
         """
         Subscribe to an event.
 
@@ -64,7 +67,7 @@ class EventBus:
         self._events[event].add(callback)
         return lambda: self.off(event, callback)
 
-    def off(self, event, callback):
+    def off(self, event: str, callback: BusCallback) -> None:
         """
         Unsubscribe from an event.
 
@@ -78,7 +81,7 @@ class EventBus:
             if not listeners:
                 del self._events[event]
 
-    def once(self, event, callback):
+    def once(self, event: str, callback: BusCallback) -> Unsubscribe:
         """
         Subscribe to an event exactly once — auto-unsubscribes after
         the first call.
@@ -90,7 +93,7 @@ class EventBus:
         Returns:
             An unsubscribe function (no-op after first call).
         """
-        def wrapper(data=None):
+        def wrapper(data: object = None) -> None:
             self.off(event, wrapper)
             callback(data)
 
@@ -100,7 +103,7 @@ class EventBus:
     # Emit
     # ------------------------------------------------------------------
 
-    def emit(self, event, data=None):
+    def emit(self, event: str, data: object = None) -> None:
         """
         Emit an event to all subscribers.
 
@@ -129,7 +132,7 @@ class EventBus:
     # Housekeeping
     # ------------------------------------------------------------------
 
-    def clear(self, event=None):
+    def clear(self, event: Optional[str] = None) -> None:
         """
         Clear listeners.
 
@@ -142,11 +145,11 @@ class EventBus:
         else:
             self._events.clear()
 
-    def has_listeners(self, event):
+    def has_listeners(self, event: str) -> bool:
         """Return ``True`` if the event has at least one subscriber."""
         return bool(self._events.get(event))
 
-    def listener_count(self, event=None):
+    def listener_count(self, event: Optional[str] = None) -> int:
         """
         Return listener count.
 

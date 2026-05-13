@@ -22,28 +22,36 @@ functions plus ad hoc helpers.
 
 from dataclasses import dataclass
 from functools import wraps
+from typing import Any, Callable, Iterable, Iterator, List, Optional, Tuple
 
 from flask import Blueprint, jsonify
 
 from .core.outcome import Outcome
 from .core.ownership import resolve_cleanup
 from .core.registry import registry
+from .core._typing import CleanupCallback, F
 from .http import json_endpoint
 
 
 @dataclass(frozen=True)
 class RouteSpec:
     rule: str
-    methods: tuple
-    endpoint: str = None
-    json_errors: str = None
+    methods: Tuple[str, ...]
+    endpoint: Optional[str] = None
+    json_errors: Optional[str] = None
 
 
-def route(rule, *, methods=None, endpoint=None, json_errors=None):
+def route(
+    rule: str,
+    *,
+    methods: Optional[Iterable[str]] = None,
+    endpoint: Optional[str] = None,
+    json_errors: Optional[str] = None,
+) -> Callable[[F], F]:
     """Declare a class-based HTTP route on a ``Router`` method."""
     methods = tuple(methods or ('GET',))
 
-    def decorator(fn):
+    def decorator(fn: F) -> F:
         specs = list(getattr(fn, '_specter_routes', ()))
         specs.append(
             RouteSpec(
@@ -65,26 +73,32 @@ class Router:
     name = 'router'
     url_prefix = ''
 
-    def __init__(self, name=None, *, url_prefix=None, import_name=None):
-        self.name = name or getattr(self.__class__, 'name', 'router')
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        *,
+        url_prefix: Optional[str] = None,
+        import_name: Optional[str] = None,
+    ) -> None:
+        self.name = str(name or getattr(self.__class__, 'name', 'router'))
         if url_prefix is not None:
             self.url_prefix = url_prefix
         self._blueprint = Blueprint(
             self.name,
             import_name or self.__class__.__module__,
         )
-        self._blueprint.strict_slashes = False
+        setattr(self._blueprint, 'strict_slashes', False)
         self._mounted = False
-        self._cleanups = []
-        self._dynamic_routes = []
+        self._cleanups: List[CleanupCallback] = []
+        self._dynamic_routes: List[Tuple[str, Callable[..., Any], RouteSpec]] = []
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         """Hook called after route registration."""
 
-    def on_unmount(self):
+    def on_unmount(self) -> None:
         """Hook called before cleanups are run."""
 
-    def mount(self):
+    def mount(self) -> Blueprint:
         """Build and return the router blueprint."""
         if self._mounted:
             return self._blueprint
@@ -112,16 +126,16 @@ class Router:
         self._mounted = True
         return self._blueprint
 
-    def blueprint(self):
+    def blueprint(self) -> Blueprint:
         """Return the mounted blueprint."""
         return self.mount()
 
-    def register(self, app):
+    def register(self, app: Any) -> 'Router':
         """Register the blueprint on a Flask app."""
         app.register_blueprint(self.mount(), url_prefix=self.url_prefix)
         return self
 
-    def teardown(self):
+    def teardown(self) -> 'Router':
         """Run router cleanup callbacks."""
         try:
             self.on_unmount()
@@ -134,28 +148,35 @@ class Router:
                     pass
         return self
 
-    def require(self, key):
+    def require(self, key: str) -> Any:
         """Resolve a required registry entry."""
         return registry.require(key)
 
-    def resolve(self, key):
+    def resolve(self, key: str) -> Any:
         """Resolve an optional registry entry."""
         return registry.resolve(key)
 
-    def add_cleanup(self, fn):
+    def add_cleanup(self, fn: CleanupCallback) -> 'Router':
         """Register cleanup for router teardown."""
         if callable(fn):
             self._cleanups.append(fn)
         return self
 
-    def own(self, resource, stop_method=None):
+    def own(self, resource: Optional[Any], stop_method: Optional[str] = None) -> Optional[Any]:
         """Own a non-router resource for teardown cleanup."""
         if resource is None:
             return None
         self.add_cleanup(resolve_cleanup(resource, stop_method=stop_method))
         return resource
 
-    def route(self, rule, *, methods=None, endpoint=None, json_errors=None):
+    def route(
+        self,
+        rule: str,
+        *,
+        methods: Optional[Iterable[str]] = None,
+        endpoint: Optional[str] = None,
+        json_errors: Optional[str] = None,
+    ) -> Callable[[F], F]:
         """Register a route against this router instance."""
         spec = RouteSpec(
             rule=rule,
@@ -164,20 +185,20 @@ class Router:
             json_errors=json_errors,
         )
 
-        def decorator(fn):
+        def decorator(fn: F) -> F:
             self._dynamic_routes.append((fn.__name__, fn, spec))
             return fn
 
         return decorator
 
-    def _build_view(self, method, spec):
+    def _build_view(self, method: Callable[..., Any], spec: RouteSpec) -> Callable[..., Any]:
         view = method
 
         if spec.json_errors:
             view = json_endpoint(spec.json_errors)(view)
 
         @wraps(view)
-        def wrapped(*args, **kwargs):
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
             result = view(*args, **kwargs)
             if isinstance(result, Outcome):
                 return jsonify(result.to_dict()), result.status
@@ -185,7 +206,7 @@ class Router:
 
         return wrapped
 
-    def _iter_route_methods(self):
+    def _iter_route_methods(self) -> Iterator[Tuple[str, Callable[..., Any]]]:
         seen = set()
         for cls in reversed(type(self).__mro__):
             for attr_name, attr in cls.__dict__.items():
@@ -195,6 +216,6 @@ class Router:
                     seen.add(attr_name)
                     yield attr_name, getattr(self, attr_name)
 
-    def _iter_dynamic_routes(self):
+    def _iter_dynamic_routes(self) -> Iterator[Tuple[str, Callable[..., Any], RouteSpec]]:
         for attr_name, attr, spec in self._dynamic_routes:
             yield attr_name, attr, spec

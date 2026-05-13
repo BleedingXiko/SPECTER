@@ -61,7 +61,7 @@ Usage::
 """
 
 import logging
-from typing import Any, Callable, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Set, Type, Union, cast
 
 from .outcome import Outcome
 
@@ -96,14 +96,14 @@ class Field:
 
     def __init__(
         self,
-        type: Union[Type, Callable] = str,
+        type: Union[Type[Any], Callable[[Any], Any]] = str,
         *,
         required: bool = False,
         default: Any = None,
-        choices: Optional[Sequence] = None,
-        validator: Optional[Callable] = None,
+        choices: Optional[Sequence[Any]] = None,
+        validator: Optional[Callable[[Any], bool]] = None,
         label: Optional[str] = None,
-    ):
+    ) -> None:
         self.type = type
         self.required = required
         self.default = default
@@ -111,7 +111,7 @@ class Field:
         self.validator = validator
         self.label = label
 
-    def _resolve_default(self):
+    def _resolve_default(self) -> Any:
         if callable(self.default) and self.default is not None:
             # Check it's a factory, not a type
             if not isinstance(self.default, type):
@@ -122,7 +122,13 @@ class Field:
 class SchemaError(Exception):
     """Raised when schema validation fails."""
 
-    def __init__(self, message, *, field=None, errors=None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: Optional[str] = None,
+        errors: Optional[Dict[str, str]] = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.field = field
@@ -147,9 +153,9 @@ class Schema:
         Default: ``False`` (unknown keys are silently ignored).
     """
 
-    def __init__(self, name: str, fields: dict, *, strict: bool = False):
+    def __init__(self, name: str, fields: Dict[str, Field], *, strict: bool = False) -> None:
         self.name = name
-        self._fields = {}
+        self._fields: Dict[str, Field] = {}
         self._strict = strict
 
         for key, spec in fields.items():
@@ -160,7 +166,7 @@ class Schema:
                 )
             self._fields[key] = spec
 
-    def validate(self, data: dict) -> Outcome:
+    def validate(self, data: Dict[str, Any]) -> Outcome[Dict[str, Any]]:
         """
         Validate and coerce a payload.
 
@@ -176,8 +182,8 @@ class Schema:
                 status=400,
             )
 
-        errors = {}
-        result = {}
+        errors: Dict[str, str] = {}
+        result: Dict[str, Any] = {}
 
         # Check for unknown keys in strict mode
         if self._strict:
@@ -243,7 +249,7 @@ class Schema:
 
         return Outcome.success(result)
 
-    def require(self, data: dict) -> dict:
+    def require(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validate and return the cleaned dict, or raise.
 
@@ -260,18 +266,18 @@ class Schema:
             try:
                 from ..http import HTTPError
                 raise HTTPError(
-                    outcome.error,
+                    outcome.error or 'Validation failed',
                     status=outcome.status,
                     payload={'errors': outcome.meta.get('errors', {})},
                 )
             except ImportError:
                 raise SchemaError(
-                    outcome.error,
+                    outcome.error or 'Validation failed',
                     errors=outcome.meta.get('errors', {}),
                 )
-        return outcome.value
+        return cast(Dict[str, Any], outcome.value)
 
-    def extend(self, name: str, extra_fields: dict, **kwargs) -> 'Schema':
+    def extend(self, name: str, extra_fields: Dict[str, Field], **kwargs: Any) -> 'Schema':
         """
         Create a new Schema that inherits this one's fields plus extras.
 
@@ -290,16 +296,16 @@ class Schema:
         return Schema(name, merged, strict=strict)
 
     @property
-    def field_names(self):
+    def field_names(self) -> Set[str]:
         """Return the set of declared field names."""
         return set(self._fields.keys())
 
     @property
-    def required_fields(self):
+    def required_fields(self) -> Set[str]:
         """Return the set of required field names."""
         return {k for k, f in self._fields.items() if f.required}
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         req = len(self.required_fields)
         total = len(self._fields)
         return f"<Schema '{self.name}' {total} fields ({req} required)>"
@@ -309,7 +315,7 @@ class Schema:
 # Coercion helpers
 # ------------------------------------------------------------------
 
-def _coerce(value, target_type):
+def _coerce(value: Any, target_type: Union[Type[Any], Callable[[Any], Any]]) -> Any:
     """
     Coerce a raw value to the target type.
 
@@ -323,6 +329,10 @@ def _coerce(value, target_type):
     if isinstance(target_type, type):
         if isinstance(value, target_type) and not isinstance(value, bool):
             return value
+        if target_type in (list, dict):
+            raise TypeError(
+                f"Expected {target_type.__name__}, got {type(value).__name__}"
+            )
 
     # Numeric coercion
     if target_type in (int, float):
@@ -338,14 +348,6 @@ def _coerce(value, target_type):
     if target_type is str:
         return str(value)
 
-    # List / dict pass-through
-    if target_type in (list, dict):
-        if isinstance(value, target_type):
-            return value
-        raise TypeError(
-            f"Expected {target_type.__name__}, got {type(value).__name__}"
-        )
-
     # Custom callable coercer
     if callable(target_type):
         return target_type(value)
@@ -353,7 +355,7 @@ def _coerce(value, target_type):
     raise TypeError(f"Unsupported coercion target: {target_type}")
 
 
-def _coerce_bool(value):
+def _coerce_bool(value: Any) -> bool:
     """
     Coerce a value to bool.
 

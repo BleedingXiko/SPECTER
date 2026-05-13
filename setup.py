@@ -27,7 +27,8 @@ setup(
     license="Apache-2.0",
     python_requires=">=3.9",
     packages=find_packages(include=["specter", "specter.*"]),
-    include_package_data=False,
+    include_package_data=True,
+    package_data={"specter": ["py.typed"]},
     install_requires=[
         "Flask>=2.0",
         "gevent>=22.0",

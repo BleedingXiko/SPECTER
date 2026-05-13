@@ -41,10 +41,12 @@ Usage::
 
 import atexit
 import logging
+from typing import Any, Dict, List, Optional
 
 from .lifecycle import Service
 from .registry import registry
 from .socket_ingress import SocketIngress
+from ._typing import HandlerLike
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ class ServiceManager(Service):
     ensuring deterministic startup/shutdown.
     """
 
-    def __init__(self, app=None, socketio=None):
+    def __init__(self, app: Any = None, socketio: Any = None) -> None:
         """
         Args:
             app: The Flask app instance.
@@ -70,8 +72,8 @@ class ServiceManager(Service):
         self._app = app
         self._socketio = socketio
         self._socket_ingress = SocketIngress(socketio=socketio)
-        self._services = []   # Ordered list of Service instances
-        self._handlers = []   # Ordered list of Handler instances
+        self._services: List[Service] = []   # Ordered list of Service instances
+        self._handlers: List[HandlerLike] = []   # Ordered list of Handler instances
         self._booted = False
         self._atexit_registered = False
 
@@ -79,7 +81,7 @@ class ServiceManager(Service):
     # Registration
     # ------------------------------------------------------------------
 
-    def register_service(self, service):
+    def register_service(self, service: Service) -> 'ServiceManager':
         """
         Register a service for managed lifecycle.
 
@@ -102,7 +104,7 @@ class ServiceManager(Service):
             self._start_registered_service(service)
         return self
 
-    def register_handler(self, handler):
+    def register_handler(self, handler: HandlerLike) -> 'ServiceManager':
         """
         Register a handler for managed lifecycle.
 
@@ -130,7 +132,7 @@ class ServiceManager(Service):
             self._setup_registered_handler(handler)
         return self
 
-    def register_controller(self, controller, *, url_prefix=None):
+    def register_controller(self, controller: Any, *, url_prefix: Optional[str] = None) -> 'ServiceManager':
         """
         Register a controller as a managed service plus managed handler.
 
@@ -161,7 +163,7 @@ class ServiceManager(Service):
     # Boot / Shutdown
     # ------------------------------------------------------------------
 
-    def boot(self):
+    def boot(self) -> 'ServiceManager':
         """
         Boot the application.
 
@@ -207,7 +209,7 @@ class ServiceManager(Service):
         # harmless "I/O operation on closed file" errors from StreamHandlers
         # being closed before atexit fires do not pollute stderr.
         if not self._atexit_registered:
-            def _atexit_shutdown():
+            def _atexit_shutdown() -> None:
                 import logging as _logging
                 _prev = _logging.raiseExceptions
                 _logging.raiseExceptions = False
@@ -227,7 +229,7 @@ class ServiceManager(Service):
         )
         return self
 
-    def shutdown(self):
+    def shutdown(self) -> 'ServiceManager':
         """
         Gracefully shut down the application.
 
@@ -295,14 +297,14 @@ class ServiceManager(Service):
     # Health
     # ------------------------------------------------------------------
 
-    def health(self):
+    def health(self) -> Dict[str, Any]:
         """
         Aggregate health report for all managed services.
 
         Returns:
             A dict with the manager's status and each service's health.
         """
-        result = {
+        result: Dict[str, Any] = {
             'status': 'ok' if self._booted else 'stopped',
             'services': {},
             'handlers': {
@@ -325,26 +327,26 @@ class ServiceManager(Service):
     # ------------------------------------------------------------------
 
     @property
-    def app(self):
+    def app(self) -> Any:
         """The Flask app instance."""
         return self._app
 
     @property
-    def socket_ingress(self):
+    def socket_ingress(self) -> SocketIngress:
         """The shared Socket.IO ingress dispatcher."""
         return self._socket_ingress
 
     @property
-    def socketio(self):
+    def socketio(self) -> Any:
         """The Flask-SocketIO instance used by this manager."""
         return self._socketio
 
     @property
-    def booted(self):
+    def booted(self) -> bool:
         """``True`` if boot() has been called successfully."""
         return self._booted
 
-    def _start_registered_service(self, service):
+    def _start_registered_service(self, service: Service) -> None:
         try:
             # Provide before start so that on_start() can resolve dependencies (including self)
             registry.provide(
@@ -365,7 +367,7 @@ class ServiceManager(Service):
                 exc_info=True,
             )
 
-    def _setup_registered_handler(self, handler):
+    def _setup_registered_handler(self, handler: HandlerLike) -> None:
         try:
             handler.setup(self._socketio)
             logger.info(

@@ -21,12 +21,17 @@ application/runtime state, with path-based updates and selector subscriptions.
 
 import copy
 import logging
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, overload
 
 from gevent.lock import BoundedSemaphore
 
 from .bus import bus
+from ._typing import CleanupOwner, StateDict, StateSubscriber, Unsubscribe
 
 logger = logging.getLogger(__name__)
+
+PathLike = Union[str, Sequence[str]]
+Selector = Union[PathLike, Callable[[StateDict], Any]]
 
 
 class Model:
@@ -34,25 +39,33 @@ class Model:
 
     def __init__(
         self,
-        name,
-        initial_state=None,
+        name: str,
+        initial_state: Optional[Dict[str, Any]] = None,
         *,
-        emit_events=False,
-        change_event=None,
-    ):
+        emit_events: bool = False,
+        change_event: Optional[str] = None,
+    ) -> None:
         self.name = name
-        self._state = copy.deepcopy(initial_state or {})
+        self._state: StateDict = copy.deepcopy(initial_state or {})
         self._lock = BoundedSemaphore(1)
-        self._subscribers = []
+        self._subscribers: List[Dict[str, Any]] = []
         self._emit_events = bool(emit_events)
         self._change_event = change_event or f'{name}:changed'
 
-    def snapshot(self):
+    def snapshot(self) -> StateDict:
         """Return a deep copy of the entire model state."""
         with self._lock:
             return copy.deepcopy(self._state)
 
-    def get(self, path=None, default=None):
+    @overload
+    def get(self) -> StateDict:
+        ...
+
+    @overload
+    def get(self, path: PathLike, default: Any = None) -> Any:
+        ...
+
+    def get(self, path: Optional[PathLike] = None, default: Any = None) -> Any:
         """
         Read the full state or a nested path.
 
@@ -67,7 +80,7 @@ class Model:
             value = _get_path(self._state, _normalize_path(path), default=default)
             return copy.deepcopy(value)
 
-    def select(self, selector, default=None):
+    def select(self, selector: Selector, default: Any = None) -> Any:
         """
         Read derived state using a selector callable or a path expression.
         """
@@ -75,7 +88,7 @@ class Model:
             return selector(self.snapshot())
         return self.get(selector, default=default)
 
-    def set(self, path, value):
+    def set(self, path: PathLike, value: Any) -> StateDict:
         """Set a nested path and notify subscribers."""
         normalized = _normalize_path(path)
 
@@ -86,7 +99,7 @@ class Model:
         self._notify(snapshot)
         return snapshot
 
-    def patch(self, partial):
+    def patch(self, partial: Dict[str, Any]) -> StateDict:
         """Shallow-merge at the model root."""
         if not isinstance(partial, dict):
             raise TypeError(
@@ -101,7 +114,7 @@ class Model:
         self._notify(snapshot)
         return snapshot
 
-    def update(self, mutator):
+    def update(self, mutator: Callable[[StateDict], Optional[Dict[str, Any]]]) -> StateDict:
         """
         Atomically update the full model using a draft mutator.
         """
@@ -124,7 +137,7 @@ class Model:
         self._notify(snapshot)
         return snapshot
 
-    def delete(self, path):
+    def delete(self, path: PathLike) -> StateDict:
         """Delete a nested path if present."""
         normalized = _normalize_path(path)
 
@@ -136,16 +149,23 @@ class Model:
             self._notify(snapshot)
         return snapshot
 
-    def clear(self):
+    def clear(self) -> StateDict:
         """Reset the model to an empty dict."""
         with self._lock:
             self._state = {}
-            snapshot = {}
+            snapshot: StateDict = {}
 
         self._notify(snapshot)
         return snapshot
 
-    def subscribe(self, fn, *, selector=None, immediate=False, owner=None):
+    def subscribe(
+        self,
+        fn: StateSubscriber,
+        *,
+        selector: Optional[Selector] = None,
+        immediate: bool = False,
+        owner: Optional[CleanupOwner] = None,
+    ) -> Unsubscribe:
         """
         Subscribe to full-state or selector-specific changes.
 
@@ -162,7 +182,7 @@ class Model:
         }
         self._subscribers.append(record)
 
-        def _unsubscribe():
+        def _unsubscribe() -> None:
             try:
                 self._subscribers.remove(record)
             except ValueError:
@@ -187,18 +207,24 @@ class Model:
 
         return _unsubscribe
 
-    def watch(self, fn, *, selector=None, immediate=True):
+    def watch(
+        self,
+        fn: StateSubscriber,
+        *,
+        selector: Optional[Selector] = None,
+        immediate: bool = True,
+    ) -> Unsubscribe:
         """Alias for ``subscribe(..., immediate=True)``."""
         return self.subscribe(fn, selector=selector, immediate=immediate)
 
-    def destroy(self):
+    def destroy(self) -> None:
         """Clear model state and subscribers."""
         with self._lock:
             self._state = {}
         self._subscribers.clear()
         logger.debug(f"[SPECTER:model] '{self.name}' destroyed")
 
-    def _notify(self, snapshot):
+    def _notify(self, snapshot: StateDict) -> None:
         for subscriber in list(self._subscribers):
             selector = subscriber['selector']
             try:
@@ -225,16 +251,20 @@ class Model:
         if self._emit_events:
             bus.emit(self._change_event, copy.deepcopy(snapshot))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<Model '{self.name}'>"
 
 
-def create_model(name, initial_state=None, **kwargs):
+def create_model(
+    name: str,
+    initial_state: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> Model:
     """Factory for creating a :class:`Model`."""
     return Model(name, initial_state=initial_state, **kwargs)
 
 
-def _normalize_path(path):
+def _normalize_path(path: PathLike) -> Tuple[str, ...]:
     if isinstance(path, str):
         return tuple(part for part in path.split('.') if part)
     if isinstance(path, (list, tuple)):
@@ -244,7 +274,7 @@ def _normalize_path(path):
     )
 
 
-def _get_path(state, path, default=None):
+def _get_path(state: StateDict, path: Tuple[str, ...], default: Any = None) -> Any:
     current = state
     for part in path:
         if not isinstance(current, dict) or part not in current:
@@ -253,7 +283,7 @@ def _get_path(state, path, default=None):
     return current
 
 
-def _set_path(state, path, value):
+def _set_path(state: StateDict, path: Tuple[str, ...], value: Any) -> None:
     if not path:
         raise ValueError("[SPECTER:model] set() requires a non-empty path")
 
@@ -268,7 +298,7 @@ def _set_path(state, path, value):
     current[path[-1]] = value
 
 
-def _delete_path(state, path):
+def _delete_path(state: StateDict, path: Tuple[str, ...]) -> bool:
     if not path:
         return False
 

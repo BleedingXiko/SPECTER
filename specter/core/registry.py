@@ -33,27 +33,38 @@ Concurrency:
 """
 
 import logging
+from typing import Any, Dict, List, Optional, TypeVar
 from gevent.lock import BoundedSemaphore
 from gevent.event import AsyncResult
 from gevent.timeout import Timeout as GeventTimeout
 
+from ._typing import CleanupOwner
+
 logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
 
 
 class SPECTERRegistry:
     """Lifecycle-aware service registry.  Singleton exported as ``registry``."""
 
-    def __init__(self):
-        self._entries = {}       # key -> value
-        self._owners = {}        # key -> owner (for lifecycle tracking)
-        self._waiters = {}       # key -> list of AsyncResult
+    def __init__(self) -> None:
+        self._entries: Dict[str, Any] = {}       # key -> value
+        self._owners: Dict[str, Optional[CleanupOwner]] = {}        # key -> owner (for lifecycle tracking)
+        self._waiters: Dict[str, List[AsyncResult]] = {}       # key -> list of AsyncResult
         self._lock = BoundedSemaphore(1)
 
     # ------------------------------------------------------------------
     # Provide / Unregister
     # ------------------------------------------------------------------
 
-    def provide(self, key, value, owner=None, replace=False):
+    def provide(
+        self,
+        key: str,
+        value: T,
+        owner: Optional[CleanupOwner] = None,
+        replace: bool = False,
+    ) -> T:
         """
         Register a value under a key.
 
@@ -92,7 +103,10 @@ class SPECTERRegistry:
 
             # Auto-unregister when owner stops
             if owner is not None:
-                owner.add_cleanup(lambda k=key: self.unregister(k))
+                def _cleanup(k: str = key) -> bool:
+                    return self.unregister(k)
+
+                owner.add_cleanup(_cleanup)
 
             # Resolve anyone waiting for this key
             waiters = self._waiters.pop(key, [])
@@ -105,7 +119,7 @@ class SPECTERRegistry:
         logger.debug(f"[SPECTER:registry] Provided '{key}'")
         return value
 
-    def unregister(self, key):
+    def unregister(self, key: str) -> bool:
         """
         Remove a registration.
 
@@ -128,7 +142,7 @@ class SPECTERRegistry:
     # Lookup
     # ------------------------------------------------------------------
 
-    def resolve(self, key):
+    def resolve(self, key: str) -> Any:
         """
         Look up a value.
 
@@ -139,7 +153,7 @@ class SPECTERRegistry:
         with self._lock:
             return self._entries.get(key)
 
-    def require(self, key):
+    def require(self, key: str) -> Any:
         """
         Look up a value.  Raises if the key is not registered.
 
@@ -159,13 +173,13 @@ class SPECTERRegistry:
             )
         return value
 
-    def has(self, key):
+    def has(self, key: str) -> bool:
         """Return ``True`` if the key is registered."""
         key = self._validate_key(key, 'has')
         with self._lock:
             return key in self._entries
 
-    def list(self):
+    def list(self) -> List[str]:
         """Return a list of all registered keys."""
         with self._lock:
             return list(self._entries.keys())
@@ -174,7 +188,7 @@ class SPECTERRegistry:
     # Wait
     # ------------------------------------------------------------------
 
-    def wait_for(self, key, timeout=None):
+    def wait_for(self, key: str, timeout: Optional[float] = None) -> Any:
         """
         Block (gevent-friendly) until a key is provided.
 
@@ -199,7 +213,7 @@ class SPECTERRegistry:
                 return self._entries[key]
 
             # Create an AsyncResult for this waiter
-            ar = AsyncResult()
+            ar: AsyncResult = AsyncResult()
             if key not in self._waiters:
                 self._waiters[key] = []
             self._waiters[key].append(ar)
@@ -226,7 +240,7 @@ class SPECTERRegistry:
     # Housekeeping
     # ------------------------------------------------------------------
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all registrations.  Primarily for tests."""
         with self._lock:
             self._entries.clear()
@@ -248,7 +262,7 @@ class SPECTERRegistry:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _validate_key(key, method_name):
+    def _validate_key(key: str, method_name: str) -> str:
         if not isinstance(key, str) or not key.strip():
             raise TypeError(
                 f"[SPECTER:registry] {method_name}() requires a "
@@ -256,7 +270,7 @@ class SPECTERRegistry:
             )
         return key.strip()
 
-    def _remove_waiter(self, key, waiter):
+    def _remove_waiter(self, key: str, waiter: AsyncResult) -> None:
         with self._lock:
             waiters = self._waiters.get(key)
             if not waiters:

@@ -66,9 +66,12 @@ Usage::
 
 import logging
 import time
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import gevent
 from gevent.event import Event as GeventEvent
+
+from ._typing import Unsubscribe, WatcherSubscriber
 
 logger = logging.getLogger(__name__)
 
@@ -120,16 +123,16 @@ class Watcher:
 
     def __init__(
         self,
-        name,
+        name: str,
         *,
-        poll=None,
-        stream=None,
-        interval=5.0,
-        retry=True,
-        max_backoff=30.0,
-        dedupe=False,
-        transform=None,
-    ):
+        poll: Optional[Callable[[], Any]] = None,
+        stream: Optional[Callable[[], Iterable[Any]]] = None,
+        interval: float = 5.0,
+        retry: bool = True,
+        max_backoff: float = 30.0,
+        dedupe: bool = False,
+        transform: Optional[Callable[[Any], Any]] = None,
+    ) -> None:
         if poll and stream:
             raise ValueError(
                 f"[SPECTER:watcher] '{name}': provide poll OR stream, not both"
@@ -148,20 +151,20 @@ class Watcher:
         self._dedupe = bool(dedupe)
         self._transform = transform
 
-        self._subscribers = []
-        self._greenlet = None
+        self._subscribers: List[WatcherSubscriber] = []
+        self._greenlet: Any = None
         self._stop_event = GeventEvent()
         self._running = False
         self._last_value = _SENTINEL
         self._backoff = 1.0
         self._error_count = 0
-        self._started_at = None
+        self._started_at: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def start(self):
+    def start(self) -> 'Watcher':
         """Start the observation loop in a background greenlet."""
         if self._running:
             return self
@@ -172,7 +175,7 @@ class Watcher:
         logger.debug(f"[SPECTER:watcher] '{self.name}' started")
         return self
 
-    def stop(self):
+    def stop(self) -> 'Watcher':
         """Stop the observation loop and join the greenlet."""
         if not self._running:
             return self
@@ -186,7 +189,7 @@ class Watcher:
         logger.debug(f"[SPECTER:watcher] '{self.name}' stopped")
         return self
 
-    def subscribe(self, fn):
+    def subscribe(self, fn: WatcherSubscriber) -> Unsubscribe:
         """
         Subscribe to observed values.
 
@@ -200,15 +203,15 @@ class Watcher:
         )
 
     @property
-    def running(self):
+    def running(self) -> bool:
         return self._running
 
     @property
-    def last_value(self):
+    def last_value(self) -> Any:
         """The most recently observed value, or ``None`` if nothing yet."""
         return None if self._last_value is _SENTINEL else self._last_value
 
-    def health(self):
+    def health(self) -> Dict[str, Any]:
         """Return a health snapshot for diagnostics."""
         uptime = (
             time.monotonic() - self._started_at
@@ -228,7 +231,7 @@ class Watcher:
     # Lifecycle integration (Service.own() compatibility)
     # ------------------------------------------------------------------
 
-    def teardown(self):
+    def teardown(self) -> None:
         """Alias for stop(), enables ``Service.own(watcher)``."""
         self.stop()
 
@@ -236,7 +239,7 @@ class Watcher:
     # Internal loop
     # ------------------------------------------------------------------
 
-    def _run(self):
+    def _run(self) -> None:
         """Main observation loop with retry support."""
         while self._running:
             try:
@@ -276,8 +279,10 @@ class Watcher:
 
         self._running = False
 
-    def _poll_loop(self):
+    def _poll_loop(self) -> None:
         """Execute poll function on a timed interval."""
+        if self._poll_fn is None:
+            return
         while self._running:
             raw = self._poll_fn()
             value = self._transform(raw) if self._transform else raw
@@ -292,8 +297,10 @@ class Watcher:
             if self._stop_event.wait(timeout=self._interval):
                 break  # Stop was requested
 
-    def _stream_loop(self):
+    def _stream_loop(self) -> None:
         """Iterate stream source and deliver items."""
+        if self._stream_fn is None:
+            return
         iterable = self._stream_fn()
         for raw in iterable:
             if not self._running:
@@ -307,7 +314,7 @@ class Watcher:
             self._last_value = value
             self._notify(value)
 
-    def _notify(self, value):
+    def _notify(self, value: Any) -> None:
         """Deliver a value to all subscribers."""
         for fn in list(self._subscribers):
             try:
@@ -317,7 +324,7 @@ class Watcher:
                     f"[SPECTER:watcher] '{self.name}' subscriber error: {exc}"
                 )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         mode = 'poll' if self._poll_fn else 'stream'
         state = 'running' if self._running else 'stopped'
         return f"<Watcher '{self.name}' {mode} {state}>"

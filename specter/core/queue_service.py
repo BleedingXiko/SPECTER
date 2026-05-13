@@ -20,6 +20,7 @@ so startup, teardown, and worker cleanup are deterministic.
 """
 
 import logging
+from typing import Any, Dict, Optional
 
 from gevent.queue import Empty, Full, JoinableQueue
 
@@ -38,13 +39,13 @@ class QueueService(Service):
 
     def __init__(
         self,
-        name,
+        name: str,
         *,
-        worker_count=1,
-        maxsize=0,
-        poll_interval=0.5,
-        initial_state=None,
-    ):
+        worker_count: int = 1,
+        maxsize: int = 0,
+        poll_interval: float = 0.5,
+        initial_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
         state = {
             'queue_size': 0,
             'worker_count': worker_count,
@@ -55,9 +56,9 @@ class QueueService(Service):
         super().__init__(name, state)
         self.worker_count = max(1, int(worker_count or 1))
         self.poll_interval = max(0.05, float(poll_interval or 0.5))
-        self.queue = JoinableQueue(maxsize=maxsize)
+        self.queue: JoinableQueue = JoinableQueue(maxsize=maxsize)
 
-    def on_start(self):
+    def on_start(self) -> None:
         for index in range(self.worker_count):
             self.spawn(
                 self._worker_loop,
@@ -65,10 +66,10 @@ class QueueService(Service):
             )
         self.on_workers_started()
 
-    def on_stop(self):
+    def on_stop(self) -> None:
         self.on_workers_stopping()
 
-    def enqueue(self, item, *, block=False, timeout=None):
+    def enqueue(self, item: Any, *, block: bool = False, timeout: Optional[float] = None) -> bool:
         """
         Enqueue an item for worker processing.
 
@@ -82,23 +83,23 @@ class QueueService(Service):
         self.set_state({'queue_size': self.queue.qsize()})
         return True
 
-    def pending_count(self):
+    def pending_count(self) -> int:
         """Return the current queue depth."""
         return self.queue.qsize()
 
-    def handle_item(self, item):
+    def handle_item(self, item: Any) -> None:
         """Process a single queue item. Subclasses must override this."""
         raise NotImplementedError(
             f"{type(self).__name__}.handle_item() must be implemented"
         )
 
-    def on_workers_started(self):
+    def on_workers_started(self) -> None:
         """Hook called after workers are spawned."""
 
-    def on_workers_stopping(self):
+    def on_workers_stopping(self) -> None:
         """Hook called before worker greenlets are torn down."""
 
-    def _worker_loop(self):
+    def _worker_loop(self) -> None:
         while self.running:
             try:
                 item = self.queue.get(timeout=self.poll_interval)

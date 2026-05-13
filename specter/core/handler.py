@@ -48,11 +48,15 @@ The ``events`` dict maps socket event names to method names::
 """
 
 import logging
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 from .registry import registry
 from .ownership import resolve_cleanup
+from ._typing import CleanupCallback
 
 logger = logging.getLogger(__name__)
+
+R = TypeVar('R')
 
 
 class Handler:
@@ -68,19 +72,19 @@ class Handler:
     """
 
     name = 'unnamed_handler'
-    events = {}
+    events: Dict[str, str] = {}
 
-    def __init__(self):
-        self._socketio = None
+    def __init__(self) -> None:
+        self._socketio: Any = None
         self._registered = False
-        self._registered_handlers = []  # [(event, handler_fn)]
-        self._cleanups = []
+        self._registered_handlers: List[Tuple[str, Callable[..., Any]]] = []  # [(event, handler_fn)]
+        self._cleanups: List[CleanupCallback] = []
 
     # ------------------------------------------------------------------
     # Lifecycle Hooks (Override These)
     # ------------------------------------------------------------------
 
-    def on_setup(self):
+    def on_setup(self) -> None:
         """
         Called after all socket events from ``events`` are registered.
 
@@ -88,7 +92,7 @@ class Handler:
         one-time initialization).
         """
 
-    def on_teardown(self):
+    def on_teardown(self) -> None:
         """
         Called before socket events are unregistered.
 
@@ -99,7 +103,7 @@ class Handler:
     # Lifecycle Control
     # ------------------------------------------------------------------
 
-    def setup(self, socketio):
+    def setup(self, socketio: Any) -> 'Handler':
         """
         Register all declared socket events with Flask-SocketIO.
 
@@ -162,7 +166,7 @@ class Handler:
 
         return self
 
-    def teardown(self):
+    def teardown(self) -> 'Handler':
         """
         Unregister all socket events.
 
@@ -203,7 +207,7 @@ class Handler:
         logger.info(f"[SPECTER] Handler '{self.name}' torn down")
         return self
 
-    def stop(self):
+    def stop(self) -> 'Handler':
         """Alias for teardown(), enables Service.own(handler)."""
         return self.teardown()
 
@@ -211,20 +215,20 @@ class Handler:
     # Registry Access (convenience)
     # ------------------------------------------------------------------
 
-    def add_cleanup(self, fn):
+    def add_cleanup(self, fn: CleanupCallback) -> 'Handler':
         """Register a cleanup callback for handler teardown."""
         if callable(fn):
             self._cleanups.append(fn)
         return self
 
-    def own(self, resource, stop_method=None):
+    def own(self, resource: Optional[R], stop_method: Optional[str] = None) -> Optional[R]:
         """Own a non-Handler resource for teardown cleanup."""
         if resource is None:
             return None
         self.add_cleanup(resolve_cleanup(resource, stop_method=stop_method))
         return resource
 
-    def require(self, key):
+    def require(self, key: str) -> Any:
         """
         Resolve a service from the registry.  Throws if not found.
 
@@ -239,7 +243,7 @@ class Handler:
         """
         return registry.require(key)
 
-    def resolve(self, key):
+    def resolve(self, key: str) -> Any:
         """
         Resolve a service from the registry.  Returns ``None`` if not found.
 
@@ -249,11 +253,11 @@ class Handler:
         return registry.resolve(key)
 
     @property
-    def registered(self):
+    def registered(self) -> bool:
         """``True`` if the handler has been set up."""
         return self._registered
 
     @property
-    def socketio(self):
+    def socketio(self) -> Any:
         """The Flask-SocketIO instance (available after ``setup()``)."""
         return self._socketio

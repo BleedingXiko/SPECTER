@@ -23,8 +23,13 @@ envelopes. They are intentionally generic.
 import logging
 import traceback
 from functools import wraps
+from typing import Any, Iterable, Mapping, Optional, TypeVar, cast, overload
 
 from flask import jsonify, request
+
+from .core._typing import F, JSONDict
+
+P = TypeVar('P', bound=Mapping[str, Any])
 
 
 class HTTPError(Exception):
@@ -32,14 +37,14 @@ class HTTPError(Exception):
 
     def __init__(
         self,
-        message,
-        status_code=400,
+        message: str,
+        status_code: int = 400,
         *,
-        status=None,
-        payload=None,
-        log_message=None,
-        log_level=logging.WARNING,
-    ):
+        status: Optional[int] = None,
+        payload: Optional[Mapping[str, Any]] = None,
+        log_message: Optional[str] = None,
+        log_level: int = logging.WARNING,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status if status is not None else status_code
@@ -47,14 +52,34 @@ class HTTPError(Exception):
         self.log_message = log_message
         self.log_level = log_level
 
-    def to_response(self):
+    def to_response(self) -> Any:
         """Return a Flask JSON response tuple."""
         body = dict(self.payload)
         body.setdefault('error', self.message)
         return jsonify(body), self.status_code
 
 
-def json_endpoint(error_message=None, *, logger=None, include_trace=True):
+@overload
+def json_endpoint(error_message: F) -> F:
+    ...
+
+
+@overload
+def json_endpoint(
+    error_message: Optional[str] = None,
+    *,
+    logger: Optional[logging.Logger] = None,
+    include_trace: bool = True,
+) -> Any:
+    ...
+
+
+def json_endpoint(
+    error_message: Any = None,
+    *,
+    logger: Optional[logging.Logger] = None,
+    include_trace: bool = True,
+) -> Any:
     """
     Decorate a Flask handler with consistent JSON exception handling.
 
@@ -74,12 +99,12 @@ def json_endpoint(error_message=None, *, logger=None, include_trace=True):
     message = error_message or 'Internal server error'
     route_logger = logger
 
-    def decorator(fn):
+    def decorator(fn: F) -> F:
         nonlocal route_logger
         route_logger = route_logger or logging.getLogger(fn.__module__)
 
         @wraps(fn)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return _normalize_response(fn(*args, **kwargs))
             except HTTPError as exc:
@@ -92,12 +117,17 @@ def json_endpoint(error_message=None, *, logger=None, include_trace=True):
                     route_logger.debug(traceback.format_exc())
                 return jsonify({'error': message}), 500
 
-        return wrapper
+        return cast(F, wrapper)
 
     return decorator
 
 
-def expect_json(*, required=None, error='Request body is required', allow_empty=False):
+def expect_json(
+    *,
+    required: Optional[Iterable[str]] = None,
+    error: str = 'Request body is required',
+    allow_empty: bool = False,
+) -> JSONDict:
     """
     Parse and validate a JSON object request body.
 
@@ -121,7 +151,13 @@ def expect_json(*, required=None, error='Request body is required', allow_empty=
     return payload
 
 
-def require_fields(payload, required, *, error=None, blank_is_missing=True):
+def require_fields(
+    payload: P,
+    required: Iterable[str],
+    *,
+    error: Optional[str] = None,
+    blank_is_missing: bool = True,
+) -> P:
     """
     Validate that a mapping contains the required keys.
 
@@ -151,7 +187,7 @@ def require_fields(payload, required, *, error=None, blank_is_missing=True):
     return payload
 
 
-def _normalize_response(result):
+def _normalize_response(result: Any) -> Any:
     """Auto-jsonify plain payloads from decorated handlers."""
     if isinstance(result, tuple):
         body = result[0]

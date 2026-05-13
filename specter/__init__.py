@@ -90,7 +90,7 @@ from .http import HTTPError, json_endpoint, expect_json, require_fields
 from .router import Router, route
 from .boot import boot
 
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 
 __all__ = [
     # Lifecycle

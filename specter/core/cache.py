@@ -38,21 +38,30 @@ Concurrency:
 
 import time
 import logging
+from typing import Any, Callable, Iterable, List, Optional, TypeVar, Generic
 from gevent.lock import BoundedSemaphore
 
 from .bus import bus
+from ._typing import CacheInvalidationCallback, Unsubscribe
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar('T')
 
-class Cache:
+
+class Cache(Generic[T]):
     """
     Named cache with TTL and dependency-based cascade invalidation.
 
     Do not instantiate directly — use :func:`create_cache`.
     """
 
-    def __init__(self, name, ttl=0, depends_on=None):
+    def __init__(
+        self,
+        name: str,
+        ttl: float = 0,
+        depends_on: Optional[Iterable[str]] = None,
+    ) -> None:
         """
         Args:
             name: Unique cache name (used in bus events and logging).
@@ -62,11 +71,11 @@ class Cache:
         self.name = name
         self._ttl = max(0.0, float(ttl or 0))
         self._entry_ttl = self._ttl
-        self._value = None
-        self._updated_at = 0
+        self._value: Optional[T] = None
+        self._updated_at = 0.0
         self._lock = BoundedSemaphore(1)
-        self._invalidate_callbacks = []
-        self._bus_unsubs = []
+        self._invalidate_callbacks: List[CacheInvalidationCallback] = []
+        self._bus_unsubs: List[Unsubscribe] = []
 
         # Subscribe to dependency events
         if depends_on:
@@ -78,7 +87,7 @@ class Cache:
     # Read
     # ------------------------------------------------------------------
 
-    def get(self, default=None):
+    def get(self, default: Optional[T] = None) -> Optional[T]:
         """
         Return cached value, or ``default`` if expired/empty.
 
@@ -93,12 +102,12 @@ class Cache:
             ):
                 # Expired — clear in place
                 self._value = None
-                self._updated_at = 0
+                self._updated_at = 0.0
                 self._entry_ttl = self._ttl
                 return default
             return self._value
 
-    def is_valid(self):
+    def is_valid(self) -> bool:
         """Return ``True`` if the cache has a non-expired value."""
         with self._lock:
             if self._value is None:
@@ -111,12 +120,12 @@ class Cache:
             return True
 
     @property
-    def updated_at(self):
+    def updated_at(self) -> float:
         """Timestamp of the last ``set()`` call (epoch seconds)."""
         return self._updated_at
 
     @property
-    def ttl(self):
+    def ttl(self) -> float:
         """Configured TTL in seconds.  0 means no auto-expiry."""
         return self._ttl
 
@@ -124,7 +133,7 @@ class Cache:
     # Write
     # ------------------------------------------------------------------
 
-    def set(self, value, ttl=None):
+    def set(self, value: T, ttl: Optional[float] = None) -> None:
         """
         Set the cached value.
 
@@ -138,7 +147,7 @@ class Cache:
             self._updated_at = time.time()
             self._entry_ttl = self._ttl if ttl is None else max(0.0, float(ttl))
 
-    def get_or_compute(self, factory, ttl=None):
+    def get_or_compute(self, factory: Callable[[], T], ttl: Optional[float] = None) -> T:
         """
         Return cached value if valid, otherwise compute it using
         ``factory()`` and cache the result.
@@ -177,7 +186,7 @@ class Cache:
     # Invalidation
     # ------------------------------------------------------------------
 
-    def invalidate(self):
+    def invalidate(self) -> None:
         """
         Clear the cache and emit ``'{name}:invalidated'`` on the bus.
 
@@ -187,7 +196,7 @@ class Cache:
         with self._lock:
             was_valid = self._value is not None
             self._value = None
-            self._updated_at = 0
+            self._updated_at = 0.0
             self._entry_ttl = self._ttl
 
         if was_valid:
@@ -207,7 +216,7 @@ class Cache:
         # Cascade: emit so dependent caches can react
         bus.emit(f'{self.name}:invalidated')
 
-    def on_invalidate(self, callback):
+    def on_invalidate(self, callback: CacheInvalidationCallback) -> Unsubscribe:
         """
         Subscribe to invalidation events for this cache.
 
@@ -228,7 +237,7 @@ class Cache:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def destroy(self):
+    def destroy(self) -> None:
         """
         Tear down the cache: unsubscribe from all bus events,
         clear callbacks, and reset state.  Called by the framework
@@ -243,7 +252,7 @@ class Cache:
         self._invalidate_callbacks.clear()
         with self._lock:
             self._value = None
-            self._updated_at = 0
+            self._updated_at = 0.0
             self._entry_ttl = self._ttl
         logger.debug(f"[SPECTER:cache] '{self.name}' destroyed")
 
@@ -251,14 +260,14 @@ class Cache:
     # Internal
     # ------------------------------------------------------------------
 
-    def _on_dependency_invalidated(self, data=None):
+    def _on_dependency_invalidated(self, data: Any = None) -> None:
         """Bus callback: a dependency was invalidated, so we invalidate too."""
         logger.debug(
             f"[SPECTER:cache] '{self.name}' dependency triggered, invalidating"
         )
         self.invalidate()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         valid = self.is_valid()
         return (
             f"<Cache '{self.name}' valid={valid} "
@@ -266,7 +275,11 @@ class Cache:
         )
 
 
-def create_cache(name, ttl=0, depends_on=None):
+def create_cache(
+    name: str,
+    ttl: float = 0,
+    depends_on: Optional[Iterable[str]] = None,
+) -> Cache[Any]:
     """
     Factory for creating a named cache.
 

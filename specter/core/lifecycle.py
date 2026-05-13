@@ -44,13 +44,20 @@ Concurrency:
 
 import logging
 import uuid
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, TypeVar
 from gevent.lock import BoundedSemaphore
 import gevent
 
 from .bus import bus
 from .ownership import resolve_cleanup
+from ._typing import BusCallback, CleanupCallback, CleanupOwner, StateDict, StateSubscriber, Unsubscribe
 
 logger = logging.getLogger(__name__)
+
+R = TypeVar('R')
+
+if TYPE_CHECKING:
+    from .process import ManagedProcess
 
 
 class Service:
@@ -74,40 +81,40 @@ class Service:
                 self._flush_remaining()
     """
 
-    def __init__(self, name, initial_state=None):
+    def __init__(self, name: str, initial_state: Optional[Dict[str, Any]] = None) -> None:
         """
         Args:
             name: Human-readable service name (used in logs and health).
             initial_state: Optional initial state dict.
         """
         self.name = name
-        self.state = dict(initial_state) if initial_state else {}
+        self.state: StateDict = dict(initial_state) if initial_state else {}
 
         self._running = False
         self._state_lock = BoundedSemaphore(1)
         self.priority = 100  # Default boot priority (lower = earlier)
 
         # Managed resources
-        self._intervals = {}      # id -> greenlet
-        self._timeouts = {}       # id -> greenlet
-        self._greenlets = set()   # managed ad-hoc greenlets
-        self._bus_unsubs = []     # list of unsubscribe functions
-        self._cleanups = []       # list of cleanup callbacks
-        self._children = []       # list of adopted Service instances
-        self._subscribers = set() # state change subscribers
+        self._intervals: Dict[str, Any] = {}      # id -> greenlet
+        self._timeouts: Dict[str, Any] = {}       # id -> greenlet
+        self._greenlets: Set[Any] = set()   # managed ad-hoc greenlets
+        self._bus_unsubs: List[Unsubscribe] = []     # list of unsubscribe functions
+        self._cleanups: List[CleanupCallback] = []       # list of cleanup callbacks
+        self._children: List['Service'] = []       # list of adopted Service instances
+        self._subscribers: Set[StateSubscriber] = set() # state change subscribers
 
     # ------------------------------------------------------------------
     # Lifecycle Hooks (Override These)
     # ------------------------------------------------------------------
 
-    def on_start(self):
+    def on_start(self) -> None:
         """
         Called once when ``start()`` transitions to running.
 
         Override to register intervals, bus listeners, and adopt children.
         """
 
-    def on_stop(self):
+    def on_stop(self) -> None:
         """
         Called during ``stop()`` before automatic teardown.
 
@@ -119,7 +126,7 @@ class Service:
     # Lifecycle Control
     # ------------------------------------------------------------------
 
-    def start(self):
+    def start(self) -> 'Service':
         """
         Start the service.  Calls ``on_start()`` once.
 
@@ -144,7 +151,7 @@ class Service:
         logger.info(f"[SPECTER] Service '{self.name}' started")
         return self
 
-    def stop(self):
+    def stop(self) -> 'Service':
         """
         Stop the service and tear down all managed resources.
 
@@ -240,7 +247,7 @@ class Service:
         return self
 
     @property
-    def running(self):
+    def running(self) -> bool:
         """``True`` if the service is currently running."""
         return self._running
 
@@ -248,7 +255,7 @@ class Service:
     # State Management
     # ------------------------------------------------------------------
 
-    def set_state(self, partial):
+    def set_state(self, partial: Dict[str, Any]) -> None:
         """
         Shallow merge into state and notify subscribers.
 
@@ -269,12 +276,17 @@ class Service:
                     f"'{self.name}': {e}"
                 )
 
-    def get_state(self):
+    def get_state(self) -> StateDict:
         """Return a copy of the current state."""
         with self._state_lock:
             return dict(self.state)
 
-    def subscribe(self, fn, immediate=False, owner=None):
+    def subscribe(
+        self,
+        fn: StateSubscriber,
+        immediate: bool = False,
+        owner: Optional[CleanupOwner] = None,
+    ) -> Unsubscribe:
         """
         Subscribe to state changes.
 
@@ -305,7 +317,7 @@ class Service:
 
         return unsub
 
-    def watch(self, fn, immediate=True):
+    def watch(self, fn: StateSubscriber, immediate: bool = True) -> Unsubscribe:
         """
         Self-subscribe: wires cleanup to this service's own lifecycle.
 
@@ -324,7 +336,13 @@ class Service:
     # Managed Timers
     # ------------------------------------------------------------------
 
-    def spawn(self, callback, *args, label=None, **kwargs):
+    def spawn(
+        self,
+        callback: Callable[..., R],
+        *args: Any,
+        label: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
         """
         Spawn an owned greenlet and track it for teardown.
 
@@ -346,7 +364,7 @@ class Service:
 
         task_label = label or getattr(callback, '__name__', 'greenlet')
 
-        def _runner():
+        def _runner() -> Optional[R]:
             try:
                 return callback(*args, **kwargs)
             except gevent.GreenletExit:
@@ -357,12 +375,20 @@ class Service:
                     f"({task_label}): {e}",
                     exc_info=True,
                 )
+                return None
 
         glet = gevent.spawn(_runner)
         self._track_greenlet(glet)
         return glet
 
-    def spawn_later(self, seconds, callback, *args, label=None, **kwargs):
+    def spawn_later(
+        self,
+        seconds: float,
+        callback: Callable[..., R],
+        *args: Any,
+        label: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
         """
         Spawn an owned greenlet after a delay and track it for teardown.
 
@@ -383,7 +409,7 @@ class Service:
 
         task_label = label or getattr(callback, '__name__', 'greenlet')
 
-        def _runner():
+        def _runner() -> Optional[R]:
             try:
                 return callback(*args, **kwargs)
             except gevent.GreenletExit:
@@ -394,12 +420,13 @@ class Service:
                     f"({task_label}): {e}",
                     exc_info=True,
                 )
+                return None
 
         glet = gevent.spawn_later(seconds, _runner)
         self._track_greenlet(glet)
         return glet
 
-    def interval(self, callback, seconds):
+    def interval(self, callback: Callable[[], Any], seconds: float) -> str:
         """
         Register a periodic task.  Auto-cancelled on ``stop()``.
 
@@ -421,7 +448,7 @@ class Service:
 
         interval_id = f"interval_{uuid.uuid4().hex[:8]}"
 
-        def _loop():
+        def _loop() -> None:
             while self._running and interval_id in self._intervals:
                 gevent.sleep(seconds)
                 if not self._running or interval_id not in self._intervals:
@@ -439,7 +466,7 @@ class Service:
         self._intervals[interval_id] = glet
         return interval_id
 
-    def timeout(self, callback, seconds):
+    def timeout(self, callback: Callable[[], Any], seconds: float) -> str:
         """
         Register a one-shot delayed task.  Auto-cancelled on ``stop()``.
 
@@ -458,7 +485,7 @@ class Service:
 
         timeout_id = f"timeout_{uuid.uuid4().hex[:8]}"
 
-        def _delayed():
+        def _delayed() -> None:
             gevent.sleep(seconds)
             if self._running and timeout_id in self._timeouts:
                 self._timeouts.pop(timeout_id, None)
@@ -475,7 +502,7 @@ class Service:
         self._timeouts[timeout_id] = glet
         return timeout_id
 
-    def cancel_interval(self, interval_id):
+    def cancel_interval(self, interval_id: str) -> None:
         """Cancel a specific interval by ID."""
         glet = self._intervals.pop(interval_id, None)
         if glet:
@@ -484,7 +511,7 @@ class Service:
             except Exception:
                 pass
 
-    def cancel_greenlet(self, glet):
+    def cancel_greenlet(self, glet: Any) -> 'Service':
         """Cancel a greenlet previously returned by ``spawn()``."""
         if glet is None:
             return self
@@ -496,7 +523,7 @@ class Service:
             pass
         return self
 
-    def cancel_timeout(self, timeout_id):
+    def cancel_timeout(self, timeout_id: str) -> None:
         """Cancel a specific timeout by ID."""
         glet = self._timeouts.pop(timeout_id, None)
         if glet:
@@ -509,7 +536,7 @@ class Service:
     # Bus Integration
     # ------------------------------------------------------------------
 
-    def listen(self, event, handler):
+    def listen(self, event: str, handler: BusCallback) -> 'Service':
         """
         Subscribe to a bus event.  Auto-unsubscribed on ``stop()``.
 
@@ -524,7 +551,7 @@ class Service:
         self._bus_unsubs.append(unsub)
         return self
 
-    def emit(self, event, data=None):
+    def emit(self, event: str, data: Any = None) -> 'Service':
         """
         Emit a bus event.
 
@@ -542,7 +569,7 @@ class Service:
     # Ownership
     # ------------------------------------------------------------------
 
-    def adopt(self, child, start=True):
+    def adopt(self, child: Optional['Service'], start: bool = True) -> 'Service':
         """
         Own a child service's lifecycle.
 
@@ -568,7 +595,7 @@ class Service:
             child.start()
         return self
 
-    def own(self, resource, stop_method=None):
+    def own(self, resource: Optional[R], stop_method: Optional[str] = None) -> Optional[R]:
         """
         Own a non-Service resource via its cleanup method.
 
@@ -589,7 +616,13 @@ class Service:
         self.add_cleanup(resolve_cleanup(resource, stop_method=stop_method))
         return resource
 
-    def start_process(self, args, *, name=None, **popen_kwargs):
+    def start_process(
+        self,
+        args: Any,
+        *,
+        name: Optional[str] = None,
+        **popen_kwargs: Any,
+    ) -> 'ManagedProcess':
         """
         Start and own a managed subprocess.
 
@@ -611,7 +644,7 @@ class Service:
     # Cleanup
     # ------------------------------------------------------------------
 
-    def add_cleanup(self, fn):
+    def add_cleanup(self, fn: CleanupCallback) -> 'Service':
         """
         Register an arbitrary cleanup callback.
 
@@ -632,7 +665,7 @@ class Service:
     # Health
     # ------------------------------------------------------------------
 
-    def health(self):
+    def health(self) -> Dict[str, Any]:
         """
         Report service health.  Override for custom health data.
 
@@ -648,11 +681,11 @@ class Service:
     # Internal
     # ------------------------------------------------------------------
 
-    def _track_greenlet(self, glet):
+    def _track_greenlet(self, glet: Any) -> Any:
         """Track an owned greenlet until it completes or is cancelled."""
         self._greenlets.add(glet)
 
-        def _discard(completed):
+        def _discard(completed: Any) -> None:
             self._greenlets.discard(completed)
 
         glet.rawlink(_discard)

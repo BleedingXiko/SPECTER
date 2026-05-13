@@ -14,6 +14,10 @@
 
 """Internal cleanup-resolution helpers for SPECTER ownership APIs."""
 
+from typing import Any, Optional, Tuple
+
+from ._typing import CleanupCallback
+
 OWNERSHIP_STOP_METHODS = (
     'stop',
     'close',
@@ -24,7 +28,7 @@ OWNERSHIP_STOP_METHODS = (
 )
 
 
-def resolve_cleanup(resource, stop_method=None):
+def resolve_cleanup(resource: Any, stop_method: Optional[str] = None) -> CleanupCallback:
     """
     Resolve a no-arg cleanup callable for a resource.
 

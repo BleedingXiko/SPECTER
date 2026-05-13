@@ -14,17 +14,21 @@
 
 """SPECTER boot helpers for app-level composition roots."""
 
+from typing import Any, Iterable, Optional
+
 from .core.manager import ServiceManager
+from .core.lifecycle import Service
+from .core._typing import HandlerLike
 
 
 def boot(
-    app,
-    socketio,
+    app: Any,
+    socketio: Any,
     *,
-    services=None,
-    handlers=None,
-    controllers=None,
-):
+    services: Optional[Iterable[Service]] = None,
+    handlers: Optional[Iterable[HandlerLike]] = None,
+    controllers: Optional[Iterable[Any]] = None,
+) -> ServiceManager:
     """
     Create and boot a ``ServiceManager`` with the supplied components.
 

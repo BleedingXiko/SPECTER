@@ -20,6 +20,7 @@ perform work, and return a typed result instead of ad hoc tuples.
 """
 
 import logging
+from typing import Any, Dict, Optional
 
 from .outcome import Outcome
 
@@ -29,7 +30,13 @@ logger = logging.getLogger(__name__)
 class OperationError(Exception):
     """Typed operation failure with status and metadata."""
 
-    def __init__(self, message, *, status=400, meta=None):
+    def __init__(
+        self,
+        message: object,
+        *,
+        status: int = 400,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__(message)
         self.message = str(message)
         self.status = status
@@ -46,19 +53,19 @@ class Operation:
 
     name = 'operation'
 
-    def __init__(self, *, logger_instance=None):
+    def __init__(self, *, logger_instance: Optional[logging.Logger] = None) -> None:
         self.logger = logger_instance or logging.getLogger(type(self).__module__)
 
-    def validate(self, *args, **kwargs):
+    def validate(self, *args: Any, **kwargs: Any) -> None:
         """Optional validation hook. Raise ``OperationError`` to fail."""
 
-    def perform(self, *args, **kwargs):
+    def perform(self, *args: Any, **kwargs: Any) -> Any:
         """Required work hook."""
         raise NotImplementedError(
             f"{type(self).__name__}.perform() must be implemented"
         )
 
-    def run(self, *args, **kwargs):
+    def run(self, *args: Any, **kwargs: Any) -> Outcome[Any]:
         """Execute the operation and always return an ``Outcome``."""
         try:
             self.validate(*args, **kwargs)
@@ -75,10 +82,10 @@ class Operation:
             )
             return Outcome.failure(str(exc), status=500)
 
-    def success(self, value=None, *, status=200, **meta):
+    def success(self, value: Any = None, *, status: int = 200, **meta: Any) -> Outcome[Any]:
         """Helper for explicit success outcomes."""
         return Outcome.success(value, status=status, **meta)
 
-    def failure(self, error, *, status=400, **meta):
+    def failure(self, error: object, *, status: int = 400, **meta: Any) -> Outcome[Any]:
         """Helper for explicit failure outcomes."""
         return Outcome.failure(error, status=status, **meta)
